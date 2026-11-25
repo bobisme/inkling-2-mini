@@ -1,4 +1,14 @@
-> **Fastest result (2026-11-24): the Maya engine, locally on the RTX 3090, at 162 tok/s with the abliterated weights**
+> **Fastest overall (2026-11-25): satellitedown's [ingine](https://github.com/satellitedown/inkling-2-mini-abliterated-ingine)
+> on a RunPod RTX 5090 (sm_120a only, so not the 3090): 527 tok/s median decode by `bench.ts` through an SSH tunnel
+> (459-604), TTFT 0.2 s, 262K context.** It serves the official weights plus its own runtime ablation file, not
+> orcarouter's edit. JailbreakBench harmful refusals: 2/100 without thinking (`enable_thinking: false`), 0/100 at
+> effort `none` and `low` (ingine's `none` is template effort 0 and still thinks briefly). Answers often carry a
+> disclaimer, which the keyword check does not count. Launch with `./runpod-ingine.sh` (plain Ubuntu + SSH; no port
+> exposed because ingine has no auth), then on the pod `git clone` the repo into /workspace and run
+> `bash scripts/install.sh` (about 10 min including the 20.2 GB download) and `scripts/ingine start`. Locally:
+> `ssh -N -L 8003:127.0.0.1:8003 root@<ip> -p <port>` and `ENGINE=ingine PROVIDER=ingine ./pi-connect.sh http://127.0.0.1:8003 0 262144`.
+>
+> **Fastest local result (2026-11-24): the Maya engine, locally on the RTX 3090, at 162 tok/s with the abliterated weights**
 > (174 tok/s stock, against ~55 for llama.cpp on the same card and 89.5 on the RunPod 5090).
 > Maya only loads Unsloth's old-layout `UD-Q4_K_XL`, so the abliterated GGUF is built by splicing orcarouter's edited
 > tensors into it: `tools/splice_abliterated.py` (checked by `tools/verify_splice.py`; `tools/diff_official.py` lists which tensors orcarouter edited), output

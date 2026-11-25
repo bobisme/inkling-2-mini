@@ -2,6 +2,7 @@
 # Add or update the "runpod" provider in pi's models.json so pi can use the pod.
 # Usage: ./pi-connect.sh <pod-id | base-url> [port=8000] [context=131072]
 #   ENGINE=maya ./pi-connect.sh http://127.0.0.1:18000 0 131072   -> Maya server (local or tunneled)
+#   ENGINE=ingine PROVIDER=ingine ./pi-connect.sh http://127.0.0.1:8003 0 262144   -> ingine through an SSH tunnel
 #   PROVIDER=<name> picks the provider id (default "runpod")
 #   ./pi-connect.sh abc123xyz 8000          -> https://abc123xyz-8000.proxy.runpod.net/v1
 #   ./pi-connect.sh http://127.0.0.1:8080   -> a local or tunneled server
@@ -28,6 +29,12 @@ if [[ $ENGINE == maya ]]; then
   # Maya treats "minimal" like "none" (no thinking at all), unlike llama.cpp (template effort 0.1). The abliterated
   # model refuses ~20-30% of harmful prompts when it answers without thinking and 0% with it, so map minimal -> low.
   LEVELS='{"off":"none","minimal":"low","low":"low","medium":"medium","high":"high"}'
+elif [[ $ENGINE == ingine ]]; then
+  # ingine (satellitedown, RTX 5090 only) also reads top-level reasoning_effort; "none" is template effort 0 (it
+  # still thinks briefly) and "minimal" 0.1. Its own ablation refuses 2/100 JailbreakBench prompts even without
+  # thinking, so no remapping is needed. No auth: reach it through an SSH tunnel, not a public port.
+  COMPAT='{"thinkingFormat":"openai","supportsDeveloperRole":false,"maxTokensField":"max_tokens"}'
+  LEVELS='{"off":"none","minimal":"minimal","low":"low","medium":"medium","high":"high"}'
 else
   COMPAT='{"thinkingFormat":"chat-template","chatTemplateKwargs":{"reasoning_effort":{"$var":"thinking.effort"}},"supportsDeveloperRole":false,"maxTokensField":"max_tokens"}'
   LEVELS='{"off":"none","minimal":"minimal","low":"low","medium":"medium","high":"high"}'
