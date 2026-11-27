@@ -1,27 +1,112 @@
-> **Fastest overall (2026-11-25): satellitedown's [ingine](https://github.com/satellitedown/inkling-2-mini-abliterated-ingine)
-> on a RunPod RTX 5090 (sm_120a only, so not the 3090): 527 tok/s median decode by `bench.ts` through an SSH tunnel
-> (459-604), TTFT 0.2 s, 262K context.** It serves the official weights plus its own runtime ablation file, not
-> orcarouter's edit. JailbreakBench harmful refusals: 2/100 without thinking (`enable_thinking: false`), 0/100 at
-> effort `none` and `low` (ingine's `none` is template effort 0 and still thinks briefly). Answers often carry a
-> disclaimer, which the keyword check does not count. Launch with `./runpod-ingine.sh` (plain Ubuntu + SSH; no port
-> exposed because ingine has no auth), then on the pod `git clone` the repo into /workspace and run
-> `bash scripts/install.sh` (about 10 min including the 20.2 GB download) and `scripts/ingine start`. Locally:
-> `ssh -N -L 8003:127.0.0.1:8003 root@<ip> -p <port>` and `ENGINE=ingine PROVIDER=ingine ./pi-connect.sh http://127.0.0.1:8003 0 262144`.
->
-> **Fastest local result (2026-11-24): the Maya engine, locally on the RTX 3090, at 162 tok/s with the abliterated weights**
-> (174 tok/s stock, against ~55 for llama.cpp on the same card and 89.5 on the RunPod 5090).
-> Maya only loads Unsloth's old-layout `UD-Q4_K_XL`, so the abliterated GGUF is built by splicing orcarouter's edited
-> tensors into it: `tools/splice_abliterated.py` (checked by `tools/verify_splice.py`; `tools/diff_official.py` lists which tensors orcarouter edited), output
-> `~/models/inkling/Inkling-2-Mini-abliterated-orca-UD-Q4_K_XL-maya.gguf`.
-> Serve it from a Maya checkout (configs in `maya/`, copied into the checkout):
-> `.venv/bin/python serve/server.py --engine maya --config ik2-abliterated.json --host 127.0.0.1 --port 18000`,
-> then `ENGINE=maya PROVIDER=maya ./pi-connect.sh http://127.0.0.1:18000 0 131072` and `/model maya/inkling` in pi.
-> `./refusal-check.sh <base>/v1` compares refusals between weight files; `bun refusal-eval.ts` runs JailbreakBench.
-> Refusals on 100 JailbreakBench harmful requests: stock 78; spliced file in Maya 0 when it thinks (effort `low`),
-> the same as orcarouter's GGUF in llama.cpp; but 17-31 when it answers without thinking. Maya treats `minimal` as no
-> thinking, so `pi-connect.sh` maps pi's `minimal` to `low` for Maya. pi's `off` still skips thinking.
+# Inkling 2 Mini (abliterated), fast, for the pi coding agent
 
-# Inkling 2 Mini (abliterated) on RunPod, for pi
+Notes and scripts for serving an abliterated Inkling 2 Mini (a model with its refusals removed) at more than
+100 tok/s, behind an OpenAI-compatible endpoint that the [pi](https://github.com/badlogic/pi-mono) coding agent can use.
+Everything was measured in November 2026.
+
+## Best setup: ingine on a RunPod RTX 5090
+
+Use satellitedown's [ingine](https://github.com/satellitedown/inkling-2-mini-abliterated-ingine) on an on-demand
+RunPod RTX 5090 pod. It is the fastest of everything tried here:
+
+| Setup | Decode, 1 user | Notes |
+|---|---|---|
+| **ingine, RunPod RTX 5090** | **527 tok/s** (459-604), TTFT 0.2 s | 262K context, ~$1.39/h (secure cloud) |
+| Maya, local RTX 3090 | 162 tok/s | needs a spliced GGUF (see below) |
+| llama.cpp, RunPod RTX 5090 | 89.5 tok/s | |
+| llama.cpp, local RTX 3090 | ~55 tok/s | |
+| vLLM, RunPod H100 | did not load | vLLM rejects the bf16 experts |
+
+ingine is a custom CUDA engine for the 5090 only (sm_120a, driver 580+). It brings its own CUDA toolkit, and it
+serves the official weights plus its own small runtime ablation file (not orcarouter's edited weights).
+Refusals on 100 JailbreakBench harmful prompts: 2 with thinking disabled, 0 at reasoning effort `none` and `low`.
+Answers often come with a disclaimer. ingine's `none` effort still thinks briefly.
+
+Use a plain pod, not RunPod serverless. A serverless endpoint was set up and abandoned: serverless 5090s were
+rarely available in data centers that support network volumes, so requests waited for a GPU and timed out.
+
+### What you need
+
+- A RunPod account with credit, and [`runpodctl`](https://github.com/runpod/runpodctl) set up (`runpodctl doctor` stores your API key).
+- An SSH key at `~/.ssh/id_ed25519.pub` (or set `SSH_PUBKEY=<path>`). The launcher puts it on the pod.
+- `jq` and `ssh` locally. [Bun](https://bun.sh) for `bench.ts` and the refusal eval.
+- pi, if you want to use it as the client.
+
+### Quick start
+
+1. **Launch the pod** (secure cloud, 50 GB volume at `/workspace`, only SSH exposed):
+
+   ```bash
+   ./runpod-ingine.sh          # CLOUD=COMMUNITY is cheaper; HOURS=3 is the requested auto-stop
+   ```
+
+   The pod id goes into `.pod-ingine`. In the RunPod console, open the pod, then **Connect**, and copy the
+   "SSH over exposed TCP" command, which gives you `<ip>` and `<port>`.
+
+2. **Install and start ingine on the pod** (about 10 minutes; most of it is the 20 GB weight download):
+
+   ```bash
+   ssh root@<ip> -p <port>
+   git clone https://github.com/satellitedown/inkling-2-mini-abliterated-ingine /workspace/ingine
+   cd /workspace/ingine && bash scripts/install.sh && scripts/ingine start
+   ```
+
+   Run `scripts/install.sh` directly: the repo's `setup.sh` menu needs an interactive terminal.
+
+3. **Tunnel the port to your machine.** ingine has no authentication, so it is never exposed publicly:
+
+   ```bash
+   ssh -N -L 8003:127.0.0.1:8003 root@<ip> -p <port>
+   ```
+
+4. **Check the speed and connect pi:**
+
+   ```bash
+   bun bench.ts http://127.0.0.1:8003/v1
+   ENGINE=ingine PROVIDER=ingine ./pi-connect.sh http://127.0.0.1:8003 0 262144
+   pi --model ingine/inkling:low
+   ```
+
+   `pi-connect.sh` adds an `ingine` provider to `~/.pi/agent/models.json` and backs the file up first. pi's thinking
+   level becomes ingine's top-level `reasoning_effort`.
+
+5. **Stop the pod when you are done** (`runpodctl pod stop <id>`, or in the console). A stopped pod keeps
+   `/workspace`, so the next time you only start the pod, run `scripts/ingine start` and open the tunnel again (the
+   IP and port can change). A stopped pod still bills for its disk. To pay nothing, remove it with
+   `runpodctl pod remove <id>` and launch a fresh one next time.
+
+   The `--stop-after` auto-stop has not fired reliably, so always check that the pod has really stopped.
+
+## Local alternative: Maya on an RTX 3090 (162 tok/s)
+
+Maya ([alesha-pro/maya-inkling-mini](https://github.com/alesha-pro/maya-inkling-mini)) runs on a 3090, but only
+loads Unsloth's old-layout `UD-Q4_K_XL` GGUF. To get abliterated weights in that layout,
+`tools/splice_abliterated.py` copies orcarouter's edited tensors into it (`tools/verify_splice.py` checks the result;
+`tools/diff_official.py` lists which tensors orcarouter edited). Then, with Maya checked out and built:
+
+```bash
+MAYA_DIR=<maya checkout> MODEL_GGUF=<spliced .gguf> just maya      # serves on 127.0.0.1:18000
+ENGINE=maya PROVIDER=maya ./pi-connect.sh http://127.0.0.1:18000 0 131072
+pi --model maya/inkling:low
+```
+
+Refusals on 100 JailbreakBench harmful prompts: stock weights 78; the spliced file 0 when it thinks (effort `low`),
+the same as orcarouter's GGUF in llama.cpp, but 17-31 when it answers without thinking. Maya treats `minimal` as
+no thinking, so `pi-connect.sh` maps pi's `minimal` to `low` for Maya.
+
+## Files
+
+| File | What it does |
+|---|---|
+| `runpod-ingine.sh` | Launches the RTX 5090 pod for ingine (the best setup) |
+| `pi-connect.sh` | Adds or updates a pi provider for a server (`ENGINE=ingine`, `maya` or llama.cpp) |
+| `bench.ts` | Measures decode speed and TTFT against any OpenAI-compatible `/v1` |
+| `refusal-eval.ts`, `refusal-check.sh` | JailbreakBench refusal eval, and a quick refusal comparison |
+| `Justfile`, `maya/` | Serves the spliced model with Maya locally |
+| `tools/` | Builds and checks the spliced GGUF for Maya |
+| `runpod-llamacpp.sh`, `runpod-vllm.sh` | Earlier experiments (below) |
+
+## Earlier experiments: llama.cpp and vLLM on RunPod
 
 > **Tested on RunPod 2026-11-24.** Route B works: RTX 5090 + llama.cpp b12679 gave **89.5 tok/s**
 > median decode, 0.75 s TTFT, and pi worked end to end (tool calls included).
@@ -38,10 +123,10 @@ OpenAI-compatible endpoint that pi uses as the `runpod/inkling` model.
 
 | Route | GPU | Weights | Decode, 1 user | Cost (Nov 2026, indicative) |
 |---|---|---|---|---|
-| **A. vLLM + DSpark** (recommended) | H100 SXM 80GB | `orcarouter/Inkling-2-Mini-abliterated` (bf16 safetensors + DSpark drafter) | estimated 150-300 tok/s, not measured yet | ~$2.69/h community, $4.39/h secure |
+| A. vLLM + DSpark | H100 SXM 80GB | `orcarouter/Inkling-2-Mini-abliterated` (bf16 safetensors + DSpark drafter) | estimated 150-300 tok/s, not measured yet | ~$2.69/h community, $4.39/h secure |
 | B. llama.cpp | RTX 5090 32GB | `orcarouter/Inkling-2-Mini-abliterated-GGUF` Mix-16G | ~100-130 tok/s short context, ~70 at 165K (community) | ~$0.69-1.39/h |
 
-## Why the GGUF alone won't reliably clear 100 tok/s
+### Why the GGUF alone won't reliably clear 100 tok/s
 
 - **llama.cpp decode for this model is limited by kernel count, not bandwidth.** Layers 6-17 run three
   times, so each token makes 48 layer visits of small kernels (hidden size 2,304). Measured on a
@@ -58,7 +143,7 @@ OpenAI-compatible endpoint that pi uses as the `runpod/inkling` model.
   GGUF files were quantized from that release. At 53.5 GB it needs an 80 GB card, so H100 SXM
   (3.35 TB/s) is the pick. An H200 has more KV room and ~1.4x the bandwidth.
 
-## Hidden VRAM cost in llama.cpp (route B)
+### Hidden VRAM cost in llama.cpp (route B)
 
 Inkling's attention adds a per-head relative-position bias. llama.cpp builds it as a dense
 `[n_kv, n_ubatch, 24 heads]` tensor, so the compute buffer is about **201 bytes × ubatch × context**.
@@ -74,7 +159,7 @@ Measured: 6.43 GiB at 128K/ub256 and 6.38 GiB at 256K/ub128. The KV cache is sma
 `--fit off` makes llama.cpp fail loudly instead of quietly moving layers to the CPU. Without it,
 a config that is too large looks like a 10 tok/s server.
 
-## Use
+### Use
 
 Once only:
 
@@ -82,7 +167,7 @@ Once only:
 runpodctl doctor     # stores the RunPod API key
 # Accept the gate (auto-approved) for the repo you will use:
 #   https://huggingface.co/orcarouter/Inkling-2-Mini-abliterated        (route A)
-#   https://huggingface.co/orcarouter/Inkling-2-Mini-abliterated-GGUF   (route B, already accepted)
+#   https://huggingface.co/orcarouter/Inkling-2-Mini-abliterated-GGUF   (route B)
 runpodctl gpu list   # check the GPU id strings and stock; the scripts default to
                      # "NVIDIA H100 80GB HBM3" and "NVIDIA GeForce RTX 5090"
 ```
@@ -107,7 +192,7 @@ pi --model runpod/inkling:low
   template's own default is `high`, and the model card warns that it can get stuck in long
   reasoning loops, so pi caps output at 32K tokens.
 
-## Verified vs not
+### Verified vs not
 
 Verified locally (RTX 3090, llama.cpp master `396ed2c`, Mix-16G):
 - The decode and prefill numbers above, and the compute-buffer sizes.
@@ -115,7 +200,7 @@ Verified locally (RTX 3090, llama.cpp master `396ed2c`, Mix-16G):
   through `--jinja` with the Inkling parser, and the prompt cache across turns.
 - `bench.ts` reports the same speed as llama-bench.
 
-Not verified (no RunPod key in this session):
+Not verified when this section was written (later RunPod runs are in the note at its top):
 - Both launch scripts against the RunPod API: GPU id strings, `--docker-args` splitting.
 - vLLM loading orcarouter's **bf16** checkpoint. vLLM's Inkling MoE has an unquantized bf16 path,
   used for layers the official release leaves unquantized, but nobody has reported a full-bf16 run.

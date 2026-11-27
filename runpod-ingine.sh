@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Launch an RTX 5090 pod for satellitedown's ingine engine (sm_120a only; claims ~500 tok/s decode).
-# The pod is plain Ubuntu with SSH. Install ingine over SSH afterwards (it brings its own CUDA 13.4 toolkit):
-#   ssh root@<ip> -p <port>  then  INGINE_DIR=/workspace/ingine bash <(curl -fsSL .../get.sh)  (menu 1, then 3)
+# Launch an RTX 5090 pod for satellitedown's ingine engine (sm_120a only; measured 527 tok/s decode).
+# The pod is plain Ubuntu with SSH; see README.md "Quick start" for installing ingine on it and connecting pi.
 # ingine has no authentication, so port 8003 is NOT exposed; reach it through an SSH tunnel:
 #   ssh -N -L 8003:127.0.0.1:8003 root@<ip> -p <port>
-# Env overrides: GPU, CLOUD (SECURE|COMMUNITY), HOURS, NAME, IMAGE
+# Env overrides: GPU, CLOUD (SECURE|COMMUNITY), HOURS, NAME, IMAGE, SSH_PUBKEY (default ~/.ssh/id_ed25519.pub)
 set -euo pipefail
 
 GPU=${GPU:-"NVIDIA GeForce RTX 5090"}

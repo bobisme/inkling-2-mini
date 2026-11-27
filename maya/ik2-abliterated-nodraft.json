@@ -2,7 +2,7 @@
   "exe": "build/maya-ik2",
   "args": [
     "--model",
-    "/home/bob/models/inkling/Inkling-2-Mini-abliterated-orca-UD-Q4_K_XL-maya.gguf",
+    "@MODEL_GGUF@",
     "--max-context",
     "131072"
   ],

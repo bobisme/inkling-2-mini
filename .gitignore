@@ -1,1 +1,4 @@
 .pod-*
+.endpoint-*
+.nv-*
+.scratch/
